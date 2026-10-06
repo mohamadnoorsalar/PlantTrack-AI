@@ -137,19 +137,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun createBackup() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isBackingUp = true, operationMessage = "Creating backup .zip...")
+            _uiState.value = _uiState.value.copy(isBackingUp = true, operationMessage = "در حال ایجاد فایل پشتیبان...")
             val res = BackupManager.createBackup(app)
             if (res.isSuccess) {
+                val backupResult = res.getOrNull()
                 _uiState.value = _uiState.value.copy(
                     isBackingUp = false,
-                    lastBackupFile = res.getOrNull(),
-                    operationMessage = "✓ Full backup created: ${res.getOrNull()?.name}"
+                    lastBackupFile = backupResult?.file,
+                    operationMessage = "فایل پشتیبان با موفقیت در پوشه Documents/PlantTrack AI ذخیره شد."
                 )
                 calculateStorage()
             } else {
                 _uiState.value = _uiState.value.copy(
                     isBackingUp = false,
-                    operationMessage = "✗ Backup failed: ${res.exceptionOrNull()?.message}"
+                    operationMessage = "خطا در ایجاد پشتیبان: ${res.exceptionOrNull()?.message}"
                 )
             }
         }

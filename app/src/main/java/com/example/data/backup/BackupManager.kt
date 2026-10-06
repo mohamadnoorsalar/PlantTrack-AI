@@ -1,6 +1,10 @@
 package com.example.data.backup
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.example.data.local.database.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,17 +18,28 @@ import java.util.zip.ZipOutputStream
 
 object BackupManager {
 
-    suspend fun createBackup(context: Context): Result<File> = withContext(Dispatchers.IO) {
-        try {
-            val backupsDir = File(context.filesDir, "backups").apply { mkdirs() }
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val zipFile = File(backupsDir, "PlantTrack_Backup_$timeStamp.zip")
+    data class BackupResult(
+        val file: File?,
+        val displayPath: String
+    )
 
-            // Checkpoint database to flush WAL
+    /**
+     * Creates a complete application backup (.zip) containing metadata, database and plant images.
+     * Saves directly into public Documents/PlantTrack AI directory accessible by device File Managers.
+     */
+    suspend fun createBackup(context: Context): Result<BackupResult> = withContext(Dispatchers.IO) {
+        try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "PlantTrack_Backup_$timeStamp.zip"
+
+            // Temporary file in app cache to build the zip cleanly
+            val tempCacheZip = File(context.cacheDir, fileName)
+
+            // Checkpoint database to flush WAL into main db file
             val db = AppDatabase.getDatabase(context)
             db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").close()
 
-            ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(tempCacheZip))).use { zos ->
                 // 1. Write metadata JSON
                 val metadata = JSONObject().apply {
                     put("backupVersion", 1)
@@ -64,7 +79,56 @@ object BackupManager {
                 }
             }
 
-            Result.success(zipFile)
+            // Transfer to public Documents/PlantTrack AI directory
+            var destinationFile: File? = null
+            var displayLocation = "Documents/PlantTrack AI"
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ (Scoped Storage): Use MediaStore.Downloads or MediaStore.Files with relative path
+                val resolver = context.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/PlantTrack AI")
+                }
+
+                val uri = resolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(tempCacheZip).use { fis ->
+                            fis.copyTo(out)
+                        }
+                    }
+                    displayLocation = "Documents/PlantTrack AI/$fileName"
+                } else {
+                    // Fallback to Documents directory File API
+                    val publicDocsDir = File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                        "PlantTrack AI"
+                    ).apply { mkdirs() }
+                    destinationFile = File(publicDocsDir, fileName)
+                    tempCacheZip.copyTo(destinationFile, overwrite = true)
+                    displayLocation = destinationFile.absolutePath
+                }
+            } else {
+                // Android 9 and lower: Direct File API in public Documents
+                val publicDocsDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                    "PlantTrack AI"
+                ).apply { mkdirs() }
+                destinationFile = File(publicDocsDir, fileName)
+                tempCacheZip.copyTo(destinationFile, overwrite = true)
+                displayLocation = destinationFile.absolutePath
+            }
+
+            // Keep a copy in app filesDir/backups for internal reference/restore list if needed
+            val internalBackupsDir = File(context.filesDir, "backups").apply { mkdirs() }
+            val internalBackupCopy = File(internalBackupsDir, fileName)
+            tempCacheZip.copyTo(internalBackupCopy, overwrite = true)
+            tempCacheZip.delete()
+
+            val finalFile = destinationFile ?: internalBackupCopy
+            Result.success(BackupResult(file = finalFile, displayPath = displayLocation))
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -82,7 +146,7 @@ object BackupManager {
     suspend fun restoreBackup(context: Context, backupZipFile: File): Result<String> = withContext(Dispatchers.IO) {
         try {
             if (!backupZipFile.exists()) {
-                return@withContext Result.failure(FileNotFoundException("Backup file does not exist"))
+                return@withContext Result.failure(FileNotFoundException("فایل پشتیبان یافت نشد"))
             }
 
             // Verify backup structure
@@ -104,7 +168,7 @@ object BackupManager {
             }
 
             if (!isValidMetadata) {
-                return@withContext Result.failure(IllegalArgumentException("Invalid or corrupted backup archive"))
+                return@withContext Result.failure(IllegalArgumentException("فایل پشتیبان نامعتبر است یا ساختار استانداردی ندارد"))
             }
 
             // Close existing database instance
@@ -137,7 +201,7 @@ object BackupManager {
                 }
             }
 
-            Result.success("Restoration completed successfully.")
+            Result.success("بازیابی اطلاعات با موفقیت انجام شد.")
         } catch (e: Exception) {
             Result.failure(e)
         }

@@ -530,7 +530,8 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                         botToken = settingsState.telegramBotToken,
                         chatId = settingsState.telegramChatId,
                         imagePath = imgPath,
-                        captionText = editedText
+                        captionText = editedText,
+                        context = context
                     )
                     if (res.isSuccess) {
                         Toast.makeText(context, "گزارش با موفقیت به تلگرام ارسال شد!", Toast.LENGTH_SHORT).show()

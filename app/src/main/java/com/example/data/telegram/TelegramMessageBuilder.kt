@@ -1,14 +1,14 @@
 package com.example.data.telegram
 
 import com.example.data.local.entity.Observation
+import com.example.util.JalaliDateHelper
 import org.json.JSONArray
-import java.text.SimpleDateFormat
-import java.util.*
 
 object TelegramMessageBuilder {
 
     /**
      * Builds the comprehensive Persian post text for a plant observation according to the required specification.
+     * Uses Jalali / Solar Hijri calendar with Persian digits (e.g. 📅 تاریخ ثبت: ۱۵ مهر ۱۴۰۵ - ساعت ۱۵:۲۷).
      */
     fun buildObservationPost(
         plantName: String,
@@ -18,8 +18,7 @@ object TelegramMessageBuilder {
         temperature: String = "",
         humidity: String = ""
     ): String {
-        val dateFormat = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.getDefault())
-        val dateString = dateFormat.format(Date(observation.createdAt))
+        val persianDateString = JalaliDateHelper.formatToPersianDateTime(observation.createdAt)
 
         val visualChangesList = parseJsonList(observation.visualChanges)
         val visibleIssuesList = parseJsonList(observation.visibleIssues)
@@ -31,7 +30,7 @@ object TelegramMessageBuilder {
         sb.append("━━━━━━━━━━━━━━━━━━\n")
         sb.append("📌 نام گیاه: ${plantName.ifBlank { "نام‌گذاری نشده" }}\n")
         sb.append("🆔 شناسه: $plantId\n")
-        sb.append("📅 تاریخ ثبت: $dateString\n\n")
+        sb.append("📅 تاریخ ثبت: $persianDateString\n\n")
 
         sb.append("📊 وضعیت کلی:\n")
         sb.append("${observation.overallStatus.ifBlank { "وضعیت عادی" }}\n\n")
@@ -106,7 +105,6 @@ object TelegramMessageBuilder {
                 }
             }
         } catch (_: Exception) {
-            // If it's a comma-separated or plain text fallback
             jsonString.split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { list.add(it) }
         }
         return list

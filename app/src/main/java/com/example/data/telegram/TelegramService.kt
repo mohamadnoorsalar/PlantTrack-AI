@@ -1,5 +1,7 @@
 package com.example.data.telegram
 
+import android.content.Context
+import com.example.util.ImageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,38 +44,44 @@ class TelegramService(
 
     /**
      * Sends the observation report to Telegram.
-     * If the text exceeds Telegram's photo caption limit (1024 characters),
-     * it gracefully sends the photo with a headline caption and delivers
-     * the complete comprehensive report as an immediately following message
-     * to avoid truncation, or falls back to text if image is missing.
+     * Uses the original high-resolution image file with ExifInterface rotation correction
+     * so portrait photos are never rotated/skewed horizontally in Telegram,
+     * maintaining 95%+ JPEG quality.
      */
     suspend fun sendObservationPhoto(
         botToken: String,
         chatId: String,
         imagePath: String,
-        captionText: String
+        captionText: String,
+        context: Context? = null
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         if (botToken.isBlank() || chatId.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("توکن ربات و شناسه چت باید تنظیم شده باشند"))
         }
 
-        val file = File(imagePath)
-        if (!file.exists()) {
+        val rawFile = File(imagePath)
+        if (!rawFile.exists()) {
             // Fallback to text message if image is missing
             return@withContext sendMessage(botToken, chatId, captionText)
+        }
+
+        // Prepare the image with orientation correction and full quality
+        val fileToSend = if (context != null) {
+            ImageUtils.getTelegramReadyImageFile(context, imagePath)
+        } else {
+            rawFile
         }
 
         try {
             // Telegram photo caption limit is 1024 characters
             if (captionText.length <= 1024) {
-                // Fits in photo caption directly
                 val url = "https://api.telegram.org/bot${botToken.trim()}/sendPhoto"
                 val mediaType = "image/jpeg".toMediaType()
                 val requestBody = MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
                     .addFormDataPart("chat_id", chatId.trim())
                     .addFormDataPart("caption", captionText)
-                    .addFormDataPart("photo", file.name, file.asRequestBody(mediaType))
+                    .addFormDataPart("photo", fileToSend.name, fileToSend.asRequestBody(mediaType))
                     .build()
 
                 val request = Request.Builder().url(url).post(requestBody).build()
@@ -95,7 +103,7 @@ class TelegramService(
                     .setType(MultipartBody.FORM)
                     .addFormDataPart("chat_id", chatId.trim())
                     .addFormDataPart("caption", shortCaption)
-                    .addFormDataPart("photo", file.name, file.asRequestBody(mediaType))
+                    .addFormDataPart("photo", fileToSend.name, fileToSend.asRequestBody(mediaType))
                     .build()
 
                 val photoRequest = Request.Builder().url(photoUrl).post(photoRequestBody).build()
