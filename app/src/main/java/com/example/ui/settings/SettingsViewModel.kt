@@ -91,8 +91,21 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             settingRepo.set("gemini_api_key", key.trim())
             _uiState.value = _uiState.value.copy(
                 geminiApiKey = key.trim(),
-                operationMessage = "Gemini API key saved."
+                operationMessage = "کلید هوش مصنوعی با موفقیت ذخیره شد."
             )
+        }
+    }
+
+    fun testGeminiConnection() {
+        val key = _uiState.value.geminiApiKey
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(operationMessage = "در حال تست اتصال به Gemini AI...")
+            val result = app.geminiService.testConnection(key.ifBlank { null })
+            if (result.isSuccess) {
+                _uiState.value = _uiState.value.copy(operationMessage = "✓ ${result.getOrNull()}")
+            } else {
+                _uiState.value = _uiState.value.copy(operationMessage = "✗ ${result.exceptionOrNull()?.message}")
+            }
         }
     }
 

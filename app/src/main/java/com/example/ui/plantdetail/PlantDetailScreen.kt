@@ -33,6 +33,7 @@ fun PlantDetailScreen(
     onToggleArchive: () -> Unit,
     onDeletePlant: () -> Unit,
     onObservationClick: (Observation) -> Unit,
+    onCompareClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val plantWithDetails = uiState.plantWithDetails
@@ -50,6 +51,9 @@ fun PlantDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onCompareClick) {
+                        Icon(Icons.Default.Compare, contentDescription = stringResource(R.string.compare))
+                    }
                     IconButton(onClick = { showEditDialog = true }) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit")
                     }

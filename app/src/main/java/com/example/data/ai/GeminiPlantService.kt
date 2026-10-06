@@ -34,6 +34,48 @@ class GeminiPlantService(
         .build()
 ) {
 
+    suspend fun testConnection(customApiKey: String? = null): Result<String> = withContext(Dispatchers.IO) {
+        val buildKey = BuildConfig.GEMINI_API_KEY
+        val apiKey = when {
+            !customApiKey.isNullOrBlank() -> customApiKey.trim()
+            buildKey.isNotBlank() && buildKey != "MY_GEMINI_API_KEY" -> buildKey
+            else -> ""
+        }
+
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("کلید هوش مصنوعی (Gemini API Key) تنظیم نشده است.")
+            )
+        }
+
+        try {
+            val jsonPayload = JSONObject().apply {
+                put("contents", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply { put("text", "Ping test") })
+                        })
+                    })
+                })
+            }
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val request = Request.Builder()
+                .url(url)
+                .post(jsonPayload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                Result.success("اتصال به Gemini AI با موفقیت برقرار شد!")
+            } else {
+                val errBody = response.body?.string() ?: "HTTP ${response.code}"
+                Result.failure(Exception("خطا (${response.code}): $errBody"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun analyzePlantImage(
         imagePath: String,
         plantName: String = "",

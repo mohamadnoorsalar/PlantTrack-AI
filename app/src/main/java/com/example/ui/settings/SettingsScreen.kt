@@ -28,6 +28,7 @@ fun SettingsScreen(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onSaveGeminiKey: (String) -> Unit,
+    onTestGemini: () -> Unit = {},
     onSaveTelegram: (String, String) -> Unit,
     onTestTelegram: () -> Unit,
     onCreateBackup: () -> Unit,
@@ -146,12 +147,20 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = { onSaveGeminiKey(geminiKeyInput) },
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text(stringResource(R.string.save))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { onSaveGeminiKey(geminiKeyInput) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(R.string.save))
+                            }
+                            OutlinedButton(
+                                onClick = onTestGemini,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(R.string.test_connection))
+                            }
                         }
                     }
                 }

@@ -323,7 +323,18 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                                 navController.popBackStack()
                             }
                         },
-                        onObservationClick = { _ -> }
+                        onObservationClick = { _ -> },
+                        onCompareClick = {
+                            navController.navigate("compare_screen")
+                        }
+                    )
+                }
+
+                composable("compare_screen") {
+                    com.example.ui.compare.CompareScreen(
+                        observations = plantDetailState.observations,
+                        plantName = plantDetailState.plantWithDetails?.plant?.name ?: "گیاه",
+                        onBackClick = { navController.popBackStack() }
                     )
                 }
 
@@ -363,6 +374,7 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                         },
                         onThemeChange = { theme -> settingsViewModel.setTheme(theme) },
                         onSaveGeminiKey = { key -> settingsViewModel.saveGeminiApiKey(key) },
+                        onTestGemini = { settingsViewModel.testGeminiConnection() },
                         onSaveTelegram = { tok, chat -> settingsViewModel.saveTelegramConfig(tok, chat) },
                         onTestTelegram = { settingsViewModel.testTelegramConnection() },
                         onCreateBackup = { settingsViewModel.createBackup() },
