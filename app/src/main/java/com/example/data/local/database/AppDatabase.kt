@@ -27,6 +27,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun settingDao(): SettingDao
 
     companion object {
+        const val DATABASE_NAME = "plant_track_database"
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -35,12 +37,20 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "plant_track_database"
+                    DATABASE_NAME
                 )
-                    // In release/future version migrations will be added here
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        fun closeAndResetDatabase() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (_: Exception) {}
+                INSTANCE = null
             }
         }
     }

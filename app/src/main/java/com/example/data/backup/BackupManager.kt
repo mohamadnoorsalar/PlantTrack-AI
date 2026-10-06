@@ -2,9 +2,11 @@ package com.example.data.backup
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.MainActivity
 import com.example.data.local.database.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,7 +39,9 @@ object BackupManager {
 
             // Checkpoint database to flush WAL into main db file
             val db = AppDatabase.getDatabase(context)
-            db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").close()
+            try {
+                db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").close()
+            } catch (_: Exception) {}
 
             ZipOutputStream(BufferedOutputStream(FileOutputStream(tempCacheZip))).use { zos ->
                 // 1. Write metadata JSON
@@ -45,7 +49,7 @@ object BackupManager {
                     put("backupVersion", 1)
                     put("appVersion", "1.0")
                     put("createdAt", System.currentTimeMillis())
-                    put("databaseName", "plant_track_database")
+                    put("databaseName", AppDatabase.DATABASE_NAME)
                 }
                 val metaEntry = ZipEntry("backup_metadata.json")
                 zos.putNextEntry(metaEntry)
@@ -53,9 +57,9 @@ object BackupManager {
                 zos.closeEntry()
 
                 // 2. Add database files
-                val dbFile = context.getDatabasePath("plant_track_database")
+                val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
                 if (dbFile.exists()) {
-                    addFileToZip(dbFile, "database/plant_track_database", zos)
+                    addFileToZip(dbFile, "database/${AppDatabase.DATABASE_NAME}", zos)
                 }
 
                 // 3. Add plant images
@@ -84,7 +88,6 @@ object BackupManager {
             var displayLocation = "Documents/PlantTrack AI"
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+ (Scoped Storage): Use MediaStore.Downloads or MediaStore.Files with relative path
                 val resolver = context.contentResolver
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -101,7 +104,6 @@ object BackupManager {
                     }
                     displayLocation = "Documents/PlantTrack AI/$fileName"
                 } else {
-                    // Fallback to Documents directory File API
                     val publicDocsDir = File(
                         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
                         "PlantTrack AI"
@@ -111,7 +113,6 @@ object BackupManager {
                     displayLocation = destinationFile.absolutePath
                 }
             } else {
-                // Android 9 and lower: Direct File API in public Documents
                 val publicDocsDir = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
                     "PlantTrack AI"
@@ -121,7 +122,7 @@ object BackupManager {
                 displayLocation = destinationFile.absolutePath
             }
 
-            // Keep a copy in app filesDir/backups for internal reference/restore list if needed
+            // Keep internal copy in filesDir/backups for internal reference
             val internalBackupsDir = File(context.filesDir, "backups").apply { mkdirs() }
             val internalBackupCopy = File(internalBackupsDir, fileName)
             tempCacheZip.copyTo(internalBackupCopy, overwrite = true)
@@ -143,13 +144,18 @@ object BackupManager {
         zos.closeEntry()
     }
 
+    /**
+     * Completely restores the application database and images from the selected backup zip file.
+     * Safely closes the database connection, purges -wal and -shm temporary files,
+     * extracts database and images, and cleanly restarts the app so that the new database is loaded.
+     */
     suspend fun restoreBackup(context: Context, backupZipFile: File): Result<String> = withContext(Dispatchers.IO) {
         try {
             if (!backupZipFile.exists()) {
                 return@withContext Result.failure(FileNotFoundException("فایل پشتیبان یافت نشد"))
             }
 
-            // Verify backup structure
+            // 1. Verify backup structure & metadata
             var isValidMetadata = false
             ZipInputStream(BufferedInputStream(FileInputStream(backupZipFile))).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
@@ -171,39 +177,69 @@ object BackupManager {
                 return@withContext Result.failure(IllegalArgumentException("فایل پشتیبان نامعتبر است یا ساختار استانداردی ندارد"))
             }
 
-            // Close existing database instance
-            val db = AppDatabase.getDatabase(context)
-            db.close()
+            // 2. Safely close database connection and reset Room singleton
+            AppDatabase.closeAndResetDatabase()
 
-            // Extract contents
+            // 3. Delete existing database and accompanying WAL / SHM files
+            val dbTarget = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+            val dbWal = File(dbTarget.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
+            val dbShm = File(dbTarget.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
+
+            try { dbWal.delete() } catch (_: Exception) {}
+            try { dbShm.delete() } catch (_: Exception) {}
+            try { dbTarget.delete() } catch (_: Exception) {}
+
+            dbTarget.parentFile?.mkdirs()
+
+            // 4. Extract database and image contents
+            val targetImagesDir = File(context.filesDir, "plant_images").apply { mkdirs() }
+            val targetThumbsDir = File(context.filesDir, "plant_thumbs").apply { mkdirs() }
+
             ZipInputStream(BufferedInputStream(FileInputStream(backupZipFile))).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
                 while (entry != null) {
                     val entryName = entry.name
                     when {
-                        entryName.startsWith("database/plant_track_database") -> {
-                            val dbTarget = context.getDatabasePath("plant_track_database")
-                            dbTarget.parentFile?.mkdirs()
+                        entryName.startsWith("database/") -> {
                             FileOutputStream(dbTarget).use { fos -> zis.copyTo(fos) }
                         }
-                        entryName.startsWith("plant_images/") -> {
-                            val targetFile = File(context.filesDir, entryName)
-                            targetFile.parentFile?.mkdirs()
-                            FileOutputStream(targetFile).use { fos -> zis.copyTo(fos) }
+                        entryName.startsWith("plant_images/") && !entry.isDirectory -> {
+                            val fileName = entryName.substringAfter("plant_images/")
+                            if (fileName.isNotBlank()) {
+                                val targetFile = File(targetImagesDir, fileName)
+                                FileOutputStream(targetFile).use { fos -> zis.copyTo(fos) }
+                            }
                         }
-                        entryName.startsWith("plant_thumbs/") -> {
-                            val targetFile = File(context.filesDir, entryName)
-                            targetFile.parentFile?.mkdirs()
-                            FileOutputStream(targetFile).use { fos -> zis.copyTo(fos) }
+                        entryName.startsWith("plant_thumbs/") && !entry.isDirectory -> {
+                            val fileName = entryName.substringAfter("plant_thumbs/")
+                            if (fileName.isNotBlank()) {
+                                val targetFile = File(targetThumbsDir, fileName)
+                                FileOutputStream(targetFile).use { fos -> zis.copyTo(fos) }
+                            }
                         }
                     }
                     entry = zis.nextEntry
                 }
             }
 
-            Result.success("بازیابی اطلاعات با موفقیت انجام شد.")
+            // Re-delete any stale -wal or -shm files if they were recreated
+            try { dbWal.delete() } catch (_: Exception) {}
+            try { dbShm.delete() } catch (_: Exception) {}
+
+            Result.success("اطلاعات با موفقیت بازیابی شد.")
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Cleanly restarts the application to re-initialize Room database and ViewModels.
+     */
+    fun restartApp(context: Context) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        context.startActivity(intent)
+        Runtime.getRuntime().exit(0)
     }
 }

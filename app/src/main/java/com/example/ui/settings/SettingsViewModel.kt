@@ -158,13 +158,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun restoreBackup(backupFile: File) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(operationMessage = "Restoring data...")
+            _uiState.value = _uiState.value.copy(operationMessage = "در حال بازیابی اطلاعات...")
             val res = BackupManager.restoreBackup(app, backupFile)
             if (res.isSuccess) {
-                _uiState.value = _uiState.value.copy(operationMessage = "✓ Backup restored successfully.")
+                _uiState.value = _uiState.value.copy(operationMessage = "اطلاعات با موفقیت بازیابی شد. در حال بازنشانی برنامه...")
                 calculateStorage()
+                kotlinx.coroutines.delay(600)
+                BackupManager.restartApp(app)
             } else {
-                _uiState.value = _uiState.value.copy(operationMessage = "✗ Restore failed: ${res.exceptionOrNull()?.message}")
+                _uiState.value = _uiState.value.copy(operationMessage = "خطا در بازیابی: ${res.exceptionOrNull()?.message}")
             }
         }
     }
