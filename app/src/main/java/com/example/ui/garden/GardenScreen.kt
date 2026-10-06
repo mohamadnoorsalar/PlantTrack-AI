@@ -32,14 +32,30 @@ fun GardenScreen(
     modifier: Modifier = Modifier
 ) {
     var showCreateMapDialog by remember { mutableStateOf(false) }
+    var newMapNameInput by remember { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.garden_map)) },
                 actions = {
-                    IconButton(onClick = { showCreateMapDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Garden Bed")
+                    IconButton(
+                        onClick = {
+                            try {
+                                newMapNameInput = ""
+                                showCreateMapDialog = true
+                            } catch (e: Throwable) {
+                                // Prevent any unexpected crashes on click
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "افزودن بخش یا کرت جدید"
+                        )
                     }
                 }
             )
@@ -58,20 +74,24 @@ fun GardenScreen(
                     selectedTabIndex = uiState.maps.indexOfFirst { it.id == uiState.currentMap?.id }.coerceAtLeast(0),
                     edgePadding = 0.dp
                 ) {
-                    uiState.maps.forEachIndexed { index, map ->
+                    uiState.maps.forEachIndexed { _, map ->
                         Tab(
                             selected = uiState.currentMap?.id == map.id,
-                            onClick = { onMapSelected(map.id) },
+                            onClick = {
+                                try {
+                                    onMapSelected(map.id)
+                                } catch (_: Throwable) {}
+                            },
                             text = { Text(map.name) }
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Drag plant markers to reposition in this bed. Tap to inspect plant.",
+                text = "نشانگر هر گیاه را برای جابه‌جایی در نقشه بکشید. برای مشاهده جزئیات روی آن ضربه بزنید.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -109,8 +129,8 @@ fun GardenScreen(
 
                 // Plant Markers
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val maxWidthPx = constraints.maxWidth.toFloat()
-                    val maxHeightPx = constraints.maxHeight.toFloat()
+                    val maxWidthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+                    val maxHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
 
                     for (item in uiState.plantsWithDetails) {
                         val plant = item.plant
@@ -122,11 +142,17 @@ fun GardenScreen(
                             xOffset = posX,
                             yOffset = posY,
                             onDrag = { newXPx, newYPx ->
-                                val normX = (newXPx / maxWidthPx).coerceIn(0.05f, 0.95f)
-                                val normY = (newYPx / maxHeightPx).coerceIn(0.05f, 0.95f)
-                                onPlantPositionChanged(plant.id, normX, normY)
+                                try {
+                                    val normX = (newXPx / maxWidthPx).coerceIn(0.05f, 0.95f)
+                                    val normY = (newYPx / maxHeightPx).coerceIn(0.05f, 0.95f)
+                                    onPlantPositionChanged(plant.id, normX, normY)
+                                } catch (_: Throwable) {}
                             },
-                            onClick = { onPlantClick(plant.id) }
+                            onClick = {
+                                try {
+                                    onPlantClick(plant.id)
+                                } catch (_: Throwable) {}
+                            }
                         )
                     }
                 }
@@ -136,34 +162,55 @@ fun GardenScreen(
         }
     }
 
+    // Safe, localized Persian Dialog for creating a new garden bed/map
     if (showCreateMapDialog) {
-        var mapName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreateMapDialog = false },
-            title = { Text("Add Garden Bed") },
-            text = {
-                OutlinedTextField(
-                    value = mapName,
-                    onValueChange = { mapName = it },
-                    label = { Text("Bed Name") },
-                    modifier = Modifier.fillMaxWidth()
+            title = {
+                Text(
+                    text = "افزودن بخش جدید",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "نام بخش، کرت یا باغچه مورد نظر را وارد کنید:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = newMapNameInput,
+                        onValueChange = { newMapNameInput = it },
+                        label = { Text("نام بخش / کرت") },
+                        placeholder = { Text("مثلاً: کرت شمالی، گلدان‌های تراس") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (mapName.isNotBlank()) {
-                            onCreateMap(mapName)
+                        try {
+                            val trimmedName = newMapNameInput.trim()
+                            if (trimmedName.isNotBlank()) {
+                                onCreateMap(trimmedName)
+                            }
+                            showCreateMapDialog = false
+                        } catch (e: Throwable) {
                             showCreateMapDialog = false
                         }
-                    }
+                    },
+                    enabled = newMapNameInput.isNotBlank()
                 ) {
-                    Text(stringResource(R.string.save))
+                    Text("تأیید")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateMapDialog = false }) {
-                    Text(stringResource(R.string.cancel))
+                    Text("انصراف")
                 }
             }
         )
