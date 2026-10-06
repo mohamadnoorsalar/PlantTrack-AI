@@ -69,4 +69,9 @@
     <string name="privacy_policy">حریم خصوصی و امنیت داده‌ها</string>
     <string name="about_app">درباره PlantTrack AI</string>
     <string name="version">نسخه ۱.۰</string>
+    <string name="camera_capture">دوربین</string>
+    <string name="gallery_pick">گالری تصاویر</string>
+    <string name="choose_input_method">انتخاب روش ثبت تصویر</string>
+    <string name="camera_permission_required">برای استفاده از دوربین، دسترسی به دوربین الزامی است.</string>
+    <string name="no_camera_app_found">برنامه دوربینی یافت نشد. می‌توانید از گالری انتخاب کنید.</string>
 </resources>

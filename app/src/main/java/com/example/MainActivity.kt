@@ -1,8 +1,9 @@
 package com.example
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -11,17 +12,21 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -46,12 +51,12 @@ import com.example.ui.settings.SettingsScreen
 import com.example.ui.settings.SettingsViewModel
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.*
 
 class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
-        // Apply saved locale (fa/en)
         val prefs = newBase.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val lang = prefs.getString("app_language", "fa") ?: "fa"
         val locale = Locale(lang)
@@ -111,27 +116,78 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
 
     var showAddPlantDialog by remember { mutableStateOf(false) }
     var isInObservationFlow by remember { mutableStateOf(false) }
+    var showSourceSelectionDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Camera capture launcher for daily check
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    // File-based high-res camera launcher (robust across all devices)
     val takePictureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        val uri = tempPhotoUri
+        if (success && uri != null) {
             isInObservationFlow = true
-            observationViewModel.onImageCaptured(bitmap)
+            observationViewModel.onImageSelectedFromGallery(uri)
         }
     }
 
-    // Photo picker launcher for daily check (gallery fallback)
+    // Photo picker launcher (Gallery)
     val galleryPickLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             isInObservationFlow = true
             observationViewModel.onImageSelectedFromGallery(uri)
+        }
+    }
+
+    // Camera runtime permission launcher
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            launchCameraCapture(
+                context = context,
+                onUriCreated = { tempPhotoUri = it },
+                onLaunch = { uri ->
+                    try {
+                        takePictureLauncher.launch(uri)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, context.getString(R.string.no_camera_app_found), Toast.LENGTH_SHORT).show()
+                        galleryPickLauncher.launch("image/*")
+                    }
+                }
+            )
+        } else {
+            Toast.makeText(context, context.getString(R.string.camera_permission_required), Toast.LENGTH_SHORT).show()
+            galleryPickLauncher.launch("image/*")
+        }
+    }
+
+    fun startDailyCheckCameraFlow() {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPermission) {
+            launchCameraCapture(
+                context = context,
+                onUriCreated = { tempPhotoUri = it },
+                onLaunch = { uri ->
+                    try {
+                        takePictureLauncher.launch(uri)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, context.getString(R.string.no_camera_app_found), Toast.LENGTH_SHORT).show()
+                        galleryPickLauncher.launch("image/*")
+                    }
+                }
+            )
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -158,7 +214,7 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
             },
             onRetakePhoto = {
                 observationViewModel.reset()
-                takePictureLauncher.launch(null)
+                startDailyCheckCameraFlow()
             },
             onFinish = {
                 isInObservationFlow = false
@@ -228,7 +284,7 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                     HomeScreen(
                         uiState = homeState,
                         onDailyCheckClick = {
-                            takePictureLauncher.launch(null)
+                            showSourceSelectionDialog = true
                         },
                         onAddPlantClick = { showAddPlantDialog = true },
                         onPlantClick = { plantId ->
@@ -267,9 +323,7 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                                 navController.popBackStack()
                             }
                         },
-                        onObservationClick = { obs ->
-                            // View details
-                        }
+                        onObservationClick = { _ -> }
                     )
                 }
 
@@ -321,6 +375,77 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
         }
     }
 
+    if (showSourceSelectionDialog) {
+        AlertDialog(
+            onDismissRequest = { showSourceSelectionDialog = false },
+            title = {
+                Text(
+                    text = stringResource(R.string.choose_input_method),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSourceSelectionDialog = false
+                                startDailyCheckCameraFlow()
+                            },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = stringResource(R.string.camera_capture),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSourceSelectionDialog = false
+                                galleryPickLauncher.launch("image/*")
+                            },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = stringResource(R.string.gallery_pick),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showSourceSelectionDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     if (showAddPlantDialog) {
         AddPlantDialog(
             onDismiss = { showAddPlantDialog = false },
@@ -339,5 +464,25 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                 )
             }
         )
+    }
+}
+
+private fun launchCameraCapture(
+    context: Context,
+    onUriCreated: (Uri) -> Unit,
+    onLaunch: (Uri) -> Unit
+) {
+    try {
+        val cacheDir = File(context.cacheDir, "camera_captures").apply { mkdirs() }
+        val photoFile = File(cacheDir, "capture_${System.currentTimeMillis()}.jpg")
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            photoFile
+        )
+        onUriCreated(uri)
+        onLaunch(uri)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Error launching camera: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
