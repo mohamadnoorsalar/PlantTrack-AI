@@ -80,7 +80,8 @@ class GeminiPlantService(
         imagePath: String,
         plantName: String = "",
         userPromptNote: String = "",
-        customApiKey: String? = null
+        customApiKey: String? = null,
+        outputLanguage: String = "fa"
     ): Result<GeminiAnalysisResult> = withContext(Dispatchers.IO) {
         val buildKey = BuildConfig.GEMINI_API_KEY
         val apiKey = when {
@@ -116,6 +117,51 @@ class GeminiPlantService(
         scaled.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
         val base64Image = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
+        // Attempt 1: Regular execution with explicit language instructions
+        var result = executeGeminiRequest(apiKey, base64Image, plantName, userPromptNote, outputLanguage, isRetry = false)
+
+        // If Persian was requested, validate that the result is in Persian. If not, auto-retry once with stronger enforcement
+        if (outputLanguage == "fa" && result.isSuccess) {
+            val parsed = result.getOrThrow()
+            if (!containsPersianText(parsed.overallStatus + " " + parsed.summary)) {
+                // Auto retry once with strict Persian instruction
+                result = executeGeminiRequest(apiKey, base64Image, plantName, userPromptNote, outputLanguage, isRetry = true)
+                if (result.isSuccess) {
+                    val retryParsed = result.getOrThrow()
+                    if (!containsPersianText(retryParsed.overallStatus + " " + retryParsed.summary)) {
+                        return@withContext Result.failure(
+                            IllegalStateException("پاسخ هوش مصنوعی به زبان فارسی ارائه نشد. لطفاً مجدداً تلاش کنید.")
+                        )
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    private fun executeGeminiRequest(
+        apiKey: String,
+        base64Image: String,
+        plantName: String,
+        userPromptNote: String,
+        outputLanguage: String,
+        isRetry: Boolean
+    ): Result<GeminiAnalysisResult> {
+        val isPersian = outputLanguage == "fa"
+
+        val languageInstruction = if (isPersian) {
+            """
+            MANDATORY LANGUAGE REQUIREMENT:
+            Respond in natural, fluent Persian (Farsi) for ALL user-facing text values.
+            Do NOT write the analysis in English.
+            Keep JSON keys in English, but ALL string values intended for the user (overall_status, summary, visual_changes, visible_issues, possible_causes, recommended_observations) MUST BE IN PERSIAN (FARSI).
+            ${if (isRetry) "STRICT ENFORCEMENT: The previous response was rejected because it was not in Persian. You MUST write all string values in Persian (فارسی)!" else ""}
+            """.trimIndent()
+        } else {
+            "Respond in English for all textual values."
+        }
+
         val systemPrompt = """
             You are a visual plant observation assistant.
             Analyze only what is visibly supported by the provided image.
@@ -127,19 +173,26 @@ class GeminiPlantService(
             If the image quality is insufficient, explicitly state that a clearer image is needed.
             Do not invent missing information.
             Do not provide specialized advice on controlled substances, heavy yield maximization, or specialized industrial cultivation.
+            
+            $languageInstruction
+
             Return the result strictly as a valid JSON object matching this schema:
             {
-              "overall_status": "Healthy" | "Normal" | "Attention Needed" | "Vigorous",
-              "summary": "Concise summary of direct visual observation",
-              "visual_changes": ["string"],
-              "visible_issues": ["string"],
-              "possible_causes": ["string"],
-              "recommended_observations": ["string"],
+              "overall_status": "string in ${if (isPersian) "Persian (e.g. وضعیت کلی مناسب به نظر می‌رسد / نیازمند بررسی / شاداب)" else "English"}",
+              "summary": "string in ${if (isPersian) "Persian" else "English"}",
+              "visual_changes": ["string in ${if (isPersian) "Persian" else "English"}"],
+              "visible_issues": ["string in ${if (isPersian) "Persian" else "English"}"],
+              "possible_causes": ["string in ${if (isPersian) "Persian" else "English"}"],
+              "recommended_observations": ["string in ${if (isPersian) "Persian" else "English"}"],
               "confidence": 0.95
             }
         """.trimIndent()
 
-        val userInstruction = "Analyze this plant observation image${if (plantName.isNotBlank()) " for plant named '$plantName'" else ""}.${if (userPromptNote.isNotBlank()) " Additional context: $userPromptNote" else ""}"
+        val userInstruction = if (isPersian) {
+            "لطفاً تصویر مشاهده گیاه را${if (plantName.isNotBlank()) " برای گیاه با نام '$plantName'" else ""} به دقت تحلیل کن و تمام توضیحات را به زبان فارسی در قالب JSON برگردان.${if (userPromptNote.isNotBlank()) " یادداشت کاربر: $userPromptNote" else ""}"
+        } else {
+            "Analyze this plant observation image${if (plantName.isNotBlank()) " for plant named '$plantName'" else ""}.${if (userPromptNote.isNotBlank()) " Additional context: $userPromptNote" else ""}"
+        }
 
         try {
             val requestBodyJson = JSONObject().apply {
@@ -169,7 +222,6 @@ class GeminiPlantService(
                 })
             }
 
-            // Using modern supported Gemini 3.5 Flash model
             val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
             val request = Request.Builder()
                 .url(url)
@@ -179,15 +231,26 @@ class GeminiPlantService(
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
                 val errBody = response.body?.string() ?: "HTTP ${response.code}"
-                return@withContext Result.failure(Exception("Gemini API error (${response.code}): $errBody"))
+                return Result.failure(Exception("Gemini API error (${response.code}): $errBody"))
             }
 
             val respBody = response.body?.string() ?: ""
             val parsedResult = parseGeminiResponse(respBody)
-            Result.success(parsedResult)
+            return Result.success(parsedResult)
         } catch (e: Exception) {
-            Result.failure(e)
+            return Result.failure(e)
         }
+    }
+
+    private fun containsPersianText(text: String): Boolean {
+        // Range for Arabic/Persian Unicode characters
+        for (char in text) {
+            val code = char.code
+            if (code in 0x0600..0x06FF || code in 0x0750..0x077F || code in 0xFB50..0xFDFF || code in 0xFE70..0xFEFF) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun parseGeminiResponse(jsonText: String): GeminiAnalysisResult {
@@ -201,8 +264,8 @@ class GeminiPlantService(
         val cleaned = text.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
         val data = JSONObject(cleaned)
 
-        val overallStatus = data.optString("overall_status", "Normal")
-        val summary = data.optString("summary", "Observation recorded.")
+        val overallStatus = data.optString("overall_status", "وضعیت ثبت شد")
+        val summary = data.optString("summary", "بررسی تصویر انجام شد.")
         val visualChanges = jsonArrayToList(data.optJSONArray("visual_changes"))
         val visibleIssues = jsonArrayToList(data.optJSONArray("visible_issues"))
         val possibleCauses = jsonArrayToList(data.optJSONArray("possible_causes"))

@@ -142,12 +142,14 @@ class ObservationViewModel(application: Application) : AndroidViewModel(applicat
             )
 
             val customApiKey = settingRepo.get("gemini_api_key")
+            val outputLanguage = settingRepo.get("app_language") ?: "fa"
             val obsId = "OBS-${System.currentTimeMillis()}"
 
             val analysisResult = geminiService.analyzePlantImage(
                 imagePath = imagePath,
                 plantName = plant.name,
-                customApiKey = customApiKey
+                customApiKey = customApiKey,
+                outputLanguage = outputLanguage
             )
 
             val observation = if (analysisResult.isSuccess) {
