@@ -76,6 +76,97 @@ class GeminiPlantService(
         }
     }
 
+    /**
+     * Analyzes a plant image to identify its Persian common species name.
+     * Returns ONLY the clean Persian name (e.g. 'شاهدانه', 'پتوس', 'فیکوس بنجامین').
+     */
+    suspend fun identifyPlantSpecies(
+        bitmap: Bitmap,
+        customApiKey: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val buildKey = BuildConfig.GEMINI_API_KEY
+        val apiKey = when {
+            !customApiKey.isNullOrBlank() -> customApiKey.trim()
+            buildKey.isNotBlank() && buildKey != "MY_GEMINI_API_KEY" -> buildKey
+            else -> ""
+        }
+
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("کلید هوش مصنوعی (Gemini API Key) تنظیم نشده است.")
+            )
+        }
+
+        try {
+            val maxDim = 800f
+            val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                val ratio = maxDim / maxOf(bitmap.width, bitmap.height)
+                Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
+            } else {
+                bitmap
+            }
+
+            val outputStream = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+            val base64Image = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+
+            val prompt = "Analyze this plant photo and identify its common Persian name and species. Return ONLY the name in Persian (e.g. 'شاهدانه' or 'پتوس' or 'فیکوس بنجامین'). If unsure, provide the most likely plant species name. Do not include markdown or explanations, return only the plain species name."
+
+            val requestBodyJson = JSONObject().apply {
+                put("contents", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply { put("text", prompt) })
+                            put(JSONObject().apply {
+                                put("inlineData", JSONObject().apply {
+                                    put("mimeType", "image/jpeg")
+                                    put("data", base64Image)
+                                })
+                            })
+                        })
+                    })
+                })
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.1)
+                })
+            }
+
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBodyJson.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                val errBody = response.body?.string() ?: "HTTP ${response.code}"
+                return@withContext Result.failure(Exception("Gemini API error (${response.code}): $errBody"))
+            }
+
+            val respBody = response.body?.string() ?: ""
+            val root = JSONObject(respBody)
+            val candidates = root.optJSONArray("candidates")
+            val candidate = candidates?.optJSONObject(0)
+            val content = candidate?.optJSONObject("content")
+            val parts = content?.optJSONArray("parts")
+            val rawText = parts?.optJSONObject(0)?.optString("text") ?: ""
+
+            val cleaned = rawText.trim()
+                .removePrefix("```")
+                .removeSuffix("```")
+                .replace("\n", " ")
+                .trim()
+
+            if (cleaned.isNotBlank()) {
+                Result.success(cleaned)
+            } else {
+                Result.failure(Exception("نام گونه تشخیص داده نشد"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun analyzePlantImage(
         imagePath: String,
         plantName: String = "",

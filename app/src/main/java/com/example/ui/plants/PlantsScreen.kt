@@ -1,6 +1,8 @@
 package com.example.ui.plants
 
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -14,12 +16,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.PlantTrackApplication
 import com.example.R
 import com.example.ui.components.PlantThumbnail
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -205,13 +212,54 @@ fun AddPlantDialog(
     var locationLabel by remember { mutableStateOf("") }
     val selectedImageUris = remember { mutableStateListOf<Uri>() }
 
+    var isAnalyzingSpecies by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    fun triggerSpeciesIdentification(targetUri: Uri) {
+        coroutineScope.launch {
+            isAnalyzingSpecies = true
+            try {
+                val bitmap = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(targetUri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }
+                }
+                if (bitmap != null) {
+                    val app = PlantTrackApplication.instance
+                    val customApiKey = app.settingRepository.get("gemini_api_key")
+                    val result = app.geminiService.identifyPlantSpecies(bitmap, customApiKey)
+                    if (result.isSuccess) {
+                        val detectedName = result.getOrNull() ?: ""
+                        if (detectedName.isNotBlank()) {
+                            species = detectedName
+                            if (name.isBlank()) {
+                                name = detectedName
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Graceful fallback for offline / errors
+            } finally {
+                isAnalyzingSpecies = false
+            }
+        }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(5)
     ) { uris ->
+        var firstAddedUri: Uri? = null
         uris.take(5).forEach { uri ->
             if (selectedImageUris.size < 5) {
+                if (firstAddedUri == null) firstAddedUri = uri
                 selectedImageUris.add(uri)
             }
+        }
+        // Automatically trigger Gemini AI species recognition on first selected reference image
+        firstAddedUri?.let { uri ->
+            triggerSpeciesIdentification(uri)
         }
     }
 
@@ -232,13 +280,52 @@ fun AddPlantDialog(
                     )
                 }
                 item {
-                    OutlinedTextField(
-                        value = species,
-                        onValueChange = { species = it },
-                        label = { Text(stringResource(R.string.species)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Column {
+                        OutlinedTextField(
+                            value = species,
+                            onValueChange = { species = it },
+                            label = { Text(stringResource(R.string.species)) },
+                            singleLine = true,
+                            trailingIcon = {
+                                if (isAnalyzingSpecies) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            val firstUri = selectedImageUris.firstOrNull()
+                                            if (firstUri != null) {
+                                                triggerSpeciesIdentification(firstUri)
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "لطفاً ابتدا یک عکس مرجع انتخاب کنید",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = "تشخیص هوشمند گونه با هوش مصنوعی",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (isAnalyzingSpecies) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "در حال تشخیص خودکار گونه با هوش مصنوعی...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
                 item {
                     OutlinedTextField(
