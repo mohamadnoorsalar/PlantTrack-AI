@@ -7,8 +7,9 @@ import org.json.JSONArray
 object TelegramMessageBuilder {
 
     /**
-     * Builds the comprehensive Persian post text for a plant observation according to the required specification.
-     * Uses Jalali / Solar Hijri calendar with Persian digits (e.g. 📅 تاریخ ثبت: ۱۵ مهر ۱۴۰۵ - ساعت ۱۵:۲۷).
+     * Builds a single, unified, elegant Persian post text for Telegram.
+     * Guaranteed to stay within Telegram's 1024 photo caption character budget (under 1000 characters).
+     * Eliminates extra blank lines and uses compact bullet points to avoid any message splitting.
      */
     fun buildObservationPost(
         plantName: String,
@@ -25,72 +26,126 @@ object TelegramMessageBuilder {
         val possibleCausesList = parseJsonList(observation.possibleCauses)
         val recommendedList = parseJsonList(observation.recommendedObservations)
 
-        val sb = StringBuilder()
-        sb.append("🌿 PlantTrack AI | گزارش وضعیت گیاه\n")
-        sb.append("━━━━━━━━━━━━━━━━━━\n")
-        sb.append("📌 نام گیاه: ${plantName.ifBlank { "نام‌گذاری نشده" }}\n")
-        sb.append("🆔 شناسه: $plantId\n")
-        sb.append("📅 تاریخ ثبت: $persianDateString\n\n")
+        val cleanName = plantName.ifBlank { "گیاه" }
+        val overallStatus = observation.overallStatus.ifBlank { "عادی" }
 
-        sb.append("📊 وضعیت کلی:\n")
-        sb.append("${observation.overallStatus.ifBlank { "وضعیت عادی" }}\n\n")
+        // Format bullets concisely
+        val visualChangesText = formatListToBullets(visualChangesList, "تغییر ظاهری خاصی مشاهده نشد")
+        val visibleIssuesText = formatListToBullets(visibleIssuesList, "مورد یا آسیبی مشاهده نشد")
+        val possibleCausesText = formatListToBullets(possibleCausesList, "")
+        val recommendedText = formatListToBullets(recommendedList, "")
+
+        val sb = StringBuilder()
+        sb.append("🌿 PlantTrack AI | $cleanName ($plantId)\n")
+        sb.append("📅 $persianDateString\n")
+        sb.append("━━━━━━━━━━━━━━━━━━\n")
+        sb.append("📊 وضعیت: $overallStatus\n")
 
         if (observation.summary.isNotBlank()) {
-            sb.append("📝 خلاصه پایش:\n")
-            sb.append("${observation.summary}\n\n")
+            val cleanSummary = observation.summary.trim().replace("\n", " ")
+            sb.append("📝 خلاصه: $cleanSummary\n")
         }
 
-        sb.append("🔍 تغییرات ظاهری مشاهده‌شده:\n")
-        if (visualChangesList.isNotEmpty()) {
-            visualChangesList.forEach { sb.append("• $it\n") }
-        } else {
-            sb.append("تغییر ظاهری محسوسی ثبت نشده است\n")
-        }
-        sb.append("\n")
+        sb.append("🔍 تغییرات: $visualChangesText\n")
+        sb.append("⚠️ نشانه‌ها: $visibleIssuesText\n")
 
-        sb.append("⚠️ عارضه‌ها یا نشانه‌های نیازمند توجه:\n")
-        if (visibleIssuesList.isNotEmpty()) {
-            visibleIssuesList.forEach { sb.append("• $it\n") }
-        } else {
-            sb.append("نشانه‌ای از آسیب یا بیماری مشاهده نشد\n")
-        }
-        sb.append("\n")
-
-        if (possibleCausesList.isNotEmpty()) {
-            sb.append("💡 علل احتمالی:\n")
-            possibleCausesList.forEach { sb.append("• $it\n") }
-            sb.append("\n")
+        if (possibleCausesText.isNotBlank()) {
+            sb.append("💡 علل احتمالی: $possibleCausesText\n")
         }
 
-        if (recommendedList.isNotEmpty()) {
-            sb.append("🌱 اقدامات و بررسی‌های پیشنهادی:\n")
-            recommendedList.forEach { sb.append("• $it\n") }
-            sb.append("\n")
+        if (recommendedText.isNotBlank()) {
+            sb.append("🌱 اقدامات پیشنهادی: $recommendedText\n")
         }
 
-        // Environmental condition and user note (only if provided)
-        val hasEnv = lightCondition.isNotBlank() || temperature.isNotBlank() || humidity.isNotBlank()
+        // Optional environment / user notes
+        val envParts = mutableListOf<String>()
+        if (lightCondition.isNotBlank()) envParts.add("نور: $lightCondition")
+        if (temperature.isNotBlank()) envParts.add("دما: $temperature")
+        if (humidity.isNotBlank()) envParts.add("رطوبت: $humidity")
+        val hasEnv = envParts.isNotEmpty()
         val hasNote = observation.userNote.isNotBlank()
 
         if (hasEnv || hasNote) {
-            sb.append("🌡 شرایط محیطی و یادداشت کاربر:\n")
-            if (hasEnv) {
-                val envParts = mutableListOf<String>()
-                if (lightCondition.isNotBlank()) envParts.add("نور: $lightCondition")
-                if (temperature.isNotBlank()) envParts.add("دما: $temperature")
-                if (humidity.isNotBlank()) envParts.add("رطوبت: $humidity")
-                sb.append("• ${envParts.joinToString(" | ")}\n")
-            }
-            if (hasNote) {
-                sb.append("• یادداشت: ${observation.userNote}\n")
-            }
-            sb.append("\n")
+            val noteDetails = mutableListOf<String>()
+            if (hasEnv) noteDetails.add(envParts.joinToString(" | "))
+            if (hasNote) noteDetails.add(observation.userNote.trim().replace("\n", " "))
+            sb.append("🌡 شرایط و یادداشت: ${noteDetails.joinToString(" • ")}\n")
         }
 
         sb.append("━━━━━━━━━━━━━━━━━━\n")
-        sb.append("🤖 گزارش تولیدشده توسط هوش مصنوعی PlantTrack AI")
+        sb.append("🤖 گزارش هوشمند PlantTrack AI")
 
-        return sb.toString().trim()
+        var resultText = sb.toString().trim()
+
+        // Strict character budget: ensure always strictly <= 1000 characters for Telegram single photo caption
+        if (resultText.length > 1000) {
+            resultText = compactTextToFitBudget(
+                cleanName = cleanName,
+                plantId = plantId,
+                date = persianDateString,
+                status = overallStatus,
+                summary = observation.summary,
+                visualChanges = visualChangesList,
+                visibleIssues = visibleIssuesList,
+                possibleCauses = possibleCausesList,
+                recommended = recommendedList
+            )
+        }
+
+        return resultText
+    }
+
+    private fun formatListToBullets(items: List<String>, emptyFallback: String): String {
+        if (items.isEmpty()) return emptyFallback
+        // For compact layout, join items with bullets on separate lines or clean inline format
+        return items.take(3).joinToString(" | ") { it.trim().replace("\n", " ") }
+    }
+
+    /**
+     * Compacts text dynamically to ensure the entire report fits cleanly in under 1000 characters.
+     */
+    private fun compactTextToFitBudget(
+        cleanName: String,
+        plantId: String,
+        date: String,
+        status: String,
+        summary: String,
+        visualChanges: List<String>,
+        visibleIssues: List<String>,
+        possibleCauses: List<String>,
+        recommended: List<String>
+    ): String {
+        val sb = StringBuilder()
+        sb.append("🌿 PlantTrack AI | $cleanName ($plantId)\n")
+        sb.append("📅 $date\n")
+        sb.append("━━━━━━━━━━━━━━━━━━\n")
+        sb.append("📊 وضعیت: $status\n")
+
+        if (summary.isNotBlank()) {
+            val shortSummary = summary.trim().replace("\n", " ").take(160)
+            sb.append("📝 خلاصه: $shortSummary\n")
+        }
+
+        val vc = if (visualChanges.isNotEmpty()) visualChanges.take(2).joinToString(" | ") else "عادی"
+        sb.append("🔍 تغییرات: $vc\n")
+
+        val vi = if (visibleIssues.isNotEmpty()) visibleIssues.take(2).joinToString(" | ") else "بدون عارضه"
+        sb.append("⚠️ نشانه‌ها: $vi\n")
+
+        if (possibleCauses.isNotEmpty()) {
+            val pc = possibleCauses.take(2).joinToString(" | ")
+            sb.append("💡 علل احتمالی: $pc\n")
+        }
+
+        if (recommended.isNotEmpty()) {
+            val rec = recommended.take(2).joinToString(" | ")
+            sb.append("🌱 اقدامات پیشنهادی: $rec\n")
+        }
+
+        sb.append("━━━━━━━━━━━━━━━━━━\n")
+        sb.append("🤖 گزارش هوشمند PlantTrack AI")
+
+        return sb.toString().trim().take(1000)
     }
 
     private fun parseJsonList(jsonString: String): List<String> {

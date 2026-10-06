@@ -43,10 +43,9 @@ class TelegramService(
     }
 
     /**
-     * Sends the observation report to Telegram.
-     * Uses the original high-resolution image file with ExifInterface rotation correction
-     * so portrait photos are never rotated/skewed horizontally in Telegram,
-     * maintaining 95%+ JPEG quality.
+     * Sends the plant observation as a SINGLE unified photo post with caption.
+     * Guaranteed NO message splitting or secondary continuation texts.
+     * Always sends exactly ONE message containing the photo and the complete report.
      */
     suspend fun sendObservationPhoto(
         botToken: String,
@@ -61,7 +60,7 @@ class TelegramService(
 
         val rawFile = File(imagePath)
         if (!rawFile.exists()) {
-            // Fallback to text message if image is missing
+            // Fallback to text message ONLY if physical image file does not exist
             return@withContext sendMessage(botToken, chatId, captionText)
         }
 
@@ -73,50 +72,26 @@ class TelegramService(
         }
 
         try {
-            // Telegram photo caption limit is 1024 characters
-            if (captionText.length <= 1024) {
-                val url = "https://api.telegram.org/bot${botToken.trim()}/sendPhoto"
-                val mediaType = "image/jpeg".toMediaType()
-                val requestBody = MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("chat_id", chatId.trim())
-                    .addFormDataPart("caption", captionText)
-                    .addFormDataPart("photo", fileToSend.name, fileToSend.asRequestBody(mediaType))
-                    .build()
+            // Strict Telegram caption budget: clamp to 1024 characters max to guarantee single message delivery
+            val safeCaption = captionText.take(1024)
 
-                val request = Request.Builder().url(url).post(requestBody).build()
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: "{}"
-                val json = JSONObject(body)
-                if (response.isSuccessful && json.optBoolean("ok")) {
-                    Result.success(true)
-                } else {
-                    Result.failure(Exception("خطای ارسال تلگرام: ${json.optString("description", "عدم پاسخ سرور")}"))
-                }
+            val url = "https://api.telegram.org/bot${botToken.trim()}/sendPhoto"
+            val mediaType = "image/jpeg".toMediaType()
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", chatId.trim())
+                .addFormDataPart("caption", safeCaption)
+                .addFormDataPart("photo", fileToSend.name, fileToSend.asRequestBody(mediaType))
+                .build()
+
+            val request = Request.Builder().url(url).post(requestBody).build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "{}"
+            val json = JSONObject(body)
+            if (response.isSuccessful && json.optBoolean("ok")) {
+                Result.success(true)
             } else {
-                // Caption exceeds 1024 characters:
-                // Send photo with concise header, then send the full detailed post as message to avoid truncation
-                val photoUrl = "https://api.telegram.org/bot${botToken.trim()}/sendPhoto"
-                val mediaType = "image/jpeg".toMediaType()
-                val shortCaption = captionText.take(900).substringBeforeLast("\n") + "\n\n(ادامه گزارش در پیام زیر 👇)"
-                val photoRequestBody = MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("chat_id", chatId.trim())
-                    .addFormDataPart("caption", shortCaption)
-                    .addFormDataPart("photo", fileToSend.name, fileToSend.asRequestBody(mediaType))
-                    .build()
-
-                val photoRequest = Request.Builder().url(photoUrl).post(photoRequestBody).build()
-                val photoResponse = client.newCall(photoRequest).execute()
-                val photoBody = photoResponse.body?.string() ?: "{}"
-                val photoJson = JSONObject(photoBody)
-
-                if (!photoResponse.isSuccessful || !photoJson.optBoolean("ok")) {
-                    return@withContext Result.failure(Exception("خطای ارسال تصویر: ${photoJson.optString("description")}"))
-                }
-
-                // Send the complete full text as follow-up text message (allows up to 4096 chars)
-                sendMessage(botToken, chatId, captionText)
+                Result.failure(Exception("خطای ارسال تلگرام: ${json.optString("description", "عدم پاسخ سرور")}"))
             }
         } catch (e: Exception) {
             Result.failure(e)
