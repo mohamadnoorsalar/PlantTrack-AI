@@ -1,0 +1,119 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      - name: Prepare Build Environment
+        run: |
+          # Ensure .env exists from example to satisfy Secrets Gradle Plugin
+          if [ ! -f .env ]; then
+            cp .env.example .env 2>/dev/null || touch .env
+          fi
+          # Ensure dummy google-services.json exists if missing to satisfy Google Services Plugin
+          if [ ! -f app/google-services.json ]; then
+            echo '{"project_info":{"project_number":"0","project_id":"dummy","storage_bucket":""},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"com.aistudio.planttrack.ptapp"}},"oauth_client":[],"api_key":[{"current_key":""}],"services":{}}],"configuration_version":"1"}' > app/google-services.json
+          fi
+
+      - name: Build APK with Gradle
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify and Prepare APK
+        id: prepare_apk
+        run: |
+          mkdir -p release
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "Error: No APK file found in app/build/outputs/apk/debug"
+            exit 1
+          fi
+
+          APK_SIZE=$(stat -c%s "$APK" 2>/dev/null || stat -f%z "$APK" 2>/dev/null)
+          if [ "$APK_SIZE" -le 0 ]; then
+            echo "Error: Generated APK is empty (size <= 0 bytes)"
+            exit 1
+          fi
+
+          cp "$APK" release/PlantTrack-AI.apk
+
+          echo "APK successfully prepared at release/PlantTrack-AI.apk (${APK_SIZE} bytes)"
+          echo "apk_path=release/PlantTrack-AI.apk" >> "$GITHUB_OUTPUT"
+          echo "apk_size=$APK_SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Version Tag
+        id: version
+        run: |
+          TAG_NAME="v1.0.${GITHUB_RUN_NUMBER}"
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_name=PlantTrack AI $TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.release_name }}
+          draft: false
+          prerelease: false
+          files: release/PlantTrack-AI.apk
+          body: |
+            # PlantTrack AI
+
+            Automatic Android APK build.
+
+            - **Version:** `${{ steps.version.outputs.tag }}`
+            - **Build Number:** `#${{ github.run_number }}`
+            - **Commit:** `${{ github.sha }}`
+            - **Branch:** `${{ github.ref_name }}`
+
+            ---
+            *This APK was automatically built and released by GitHub Actions.*
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlantTrack-AI
+          path: release/PlantTrack-AI.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Build Summary
+        run: |
+          echo "### PlantTrack AI Build & Release Summary 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** \`PlantTrack-AI.apk\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release:** [${{ steps.version.outputs.release_name }}](${{ steps.create_release.outputs.url }})" >> $GITHUB_STEP_SUMMARY
