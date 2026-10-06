@@ -3,6 +3,7 @@ package com.example.data.ai
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +14,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.lang.reflect.Field
 import java.util.concurrent.TimeUnit
 
 data class GeminiAnalysisResult(
@@ -28,20 +28,11 @@ data class GeminiAnalysisResult(
 
 class GeminiPlantService(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 ) {
-
-    private fun getBuildConfigApiKey(): String {
-        return try {
-            val clazz = Class.forName("com.example.BuildConfig")
-            val field: Field = clazz.getField("GEMINI_API_KEY")
-            field.get(null) as? String ?: ""
-        } catch (e: Throwable) {
-            ""
-        }
-    }
 
     suspend fun analyzePlantImage(
         imagePath: String,
@@ -49,7 +40,7 @@ class GeminiPlantService(
         userPromptNote: String = "",
         customApiKey: String? = null
     ): Result<GeminiAnalysisResult> = withContext(Dispatchers.IO) {
-        val buildKey = getBuildConfigApiKey()
+        val buildKey = BuildConfig.GEMINI_API_KEY
         val apiKey = when {
             !customApiKey.isNullOrBlank() -> customApiKey.trim()
             buildKey.isNotBlank() && buildKey != "MY_GEMINI_API_KEY" -> buildKey
@@ -58,18 +49,18 @@ class GeminiPlantService(
 
         if (apiKey.isBlank()) {
             return@withContext Result.failure(
-                IllegalStateException("Gemini API key is not configured. Please set GEMINI_API_KEY in Settings or Secrets.")
+                IllegalStateException("کلید هوش مصنوعی (Gemini API Key) تنظیم نشده است. لطفاً در بخش تنظیمات یا AI Studio Secrets کلید را وارد کنید.")
             )
         }
 
         val file = File(imagePath)
         if (!file.exists()) {
-            return@withContext Result.failure(IllegalArgumentException("Image file does not exist: $imagePath"))
+            return@withContext Result.failure(IllegalArgumentException("فایل تصویر یافت نشد: $imagePath"))
         }
 
         val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
         val bitmap = BitmapFactory.decodeFile(imagePath, opts)
-            ?: return@withContext Result.failure(IllegalStateException("Failed to decode image"))
+            ?: return@withContext Result.failure(IllegalStateException("خطا در پردازش تصویر گیاه"))
 
         val maxDim = 1024f
         val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
@@ -98,7 +89,7 @@ class GeminiPlantService(
             {
               "overall_status": "Healthy" | "Normal" | "Attention Needed" | "Vigorous",
               "summary": "Concise summary of direct visual observation",
-              "visual_changes": ["string", "string"],
+              "visual_changes": ["string"],
               "visible_issues": ["string"],
               "possible_causes": ["string"],
               "recommended_observations": ["string"],
@@ -136,7 +127,8 @@ class GeminiPlantService(
                 })
             }
 
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+            // Using modern supported Gemini 3.5 Flash model
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
             val request = Request.Builder()
                 .url(url)
                 .post(requestBodyJson.toString().toRequestBody("application/json".toMediaType()))
