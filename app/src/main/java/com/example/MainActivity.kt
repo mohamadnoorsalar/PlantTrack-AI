@@ -118,6 +118,10 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
     var isInObservationFlow by remember { mutableStateOf(false) }
     var showSourceSelectionDialog by remember { mutableStateOf(false) }
 
+    // Telegram preview state
+    var pendingTelegramPostText by remember { mutableStateOf<String?>(null) }
+    var pendingTelegramImagePath by remember { mutableStateOf<String?>(null) }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -221,23 +225,19 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                 observationViewModel.reset()
             },
             onShareToTelegram = { obsId ->
-                coroutineScope.launch {
-                    val obs = plantDetailState.observations.find { it.id == obsId }
-                        ?: homeState.recentObservations.find { it.id == obsId }
-                    if (obs != null) {
-                        val caption = "🌱 PlantTrack AI\nPlant: ${obs.plantId}\nStatus: ${obs.overallStatus}\nSummary: ${obs.summary}"
-                        val res = PlantTrackApplication.instance.telegramService.sendObservationPhoto(
-                            botToken = settingsState.telegramBotToken,
-                            chatId = settingsState.telegramChatId,
-                            imagePath = obs.imagePath,
-                            captionText = caption
-                        )
-                        if (res.isSuccess) {
-                            Toast.makeText(context, "Sent to Telegram!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Telegram error: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
+                val obs = plantDetailState.observations.find { it.id == obsId }
+                    ?: homeState.recentObservations.find { it.id == obsId }
+                if (obs != null) {
+                    val plant = plantListState.plants.find { it.plant.id == obs.plantId }?.plant
+                        ?: plantDetailState.plantWithDetails?.plant
+                    val pName = plant?.name ?: obs.plantId
+                    val postText = com.example.data.telegram.TelegramMessageBuilder.buildObservationPost(
+                        plantName = pName,
+                        plantId = obs.plantId,
+                        observation = obs
+                    )
+                    pendingTelegramPostText = postText
+                    pendingTelegramImagePath = obs.imagePath
                 }
             }
         )
@@ -474,6 +474,35 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                         showAddPlantDialog = false
                     }
                 )
+            }
+        )
+    }
+
+    pendingTelegramPostText?.let { initialText ->
+        val imgPath = pendingTelegramImagePath ?: ""
+        com.example.ui.telegram.TelegramPreviewDialog(
+            initialPostText = initialText,
+            imagePath = imgPath,
+            onDismiss = {
+                pendingTelegramPostText = null
+                pendingTelegramImagePath = null
+            },
+            onSend = { editedText ->
+                pendingTelegramPostText = null
+                pendingTelegramImagePath = null
+                coroutineScope.launch {
+                    val res = PlantTrackApplication.instance.telegramService.sendObservationPhoto(
+                        botToken = settingsState.telegramBotToken,
+                        chatId = settingsState.telegramChatId,
+                        imagePath = imgPath,
+                        captionText = editedText
+                    )
+                    if (res.isSuccess) {
+                        Toast.makeText(context, "گزارش با موفقیت به تلگرام ارسال شد!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "خطای تلگرام: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
         )
     }
