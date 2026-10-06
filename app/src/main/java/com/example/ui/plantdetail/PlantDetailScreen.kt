@@ -33,6 +33,7 @@ fun PlantDetailScreen(
     onToggleArchive: () -> Unit,
     onDeletePlant: () -> Unit,
     onObservationClick: (Observation) -> Unit,
+    onRetryAnalysis: (Observation) -> Unit = {},
     onCompareClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -212,44 +213,90 @@ fun PlantDetailScreen(
                 }
             } else {
                 items(uiState.observations) { obs ->
-                    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                    val dateFormat = SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.getDefault())
                     val dateStr = dateFormat.format(Date(obs.createdAt))
+                    val isFailedOrPending = obs.aiStatus == "PENDING" || obs.aiStatus == "FAILED"
+                    val isAnalyzing = obs.aiStatus == "ANALYZING"
 
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onObservationClick(obs) },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isFailedOrPending)
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
+                            else
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        )
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            PlantThumbnail(imagePath = obs.imagePath, size = 64.dp)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = dateStr,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = obs.overallStatus,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                if (obs.summary.isNotBlank()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                PlantThumbnail(imagePath = obs.imagePath, size = 64.dp)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = obs.summary,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2
+                                        text = dateStr,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Text(
+                                        text = obs.overallStatus,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isFailedOrPending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                    )
+                                    if (obs.summary.isNotBlank()) {
+                                        val displaySummary = if (isFailedOrPending) {
+                                            when {
+                                                obs.summary.contains("503") -> "خطای موقت سرور هوش مصنوعی (۵۰۳) - لطفاً دوباره تلاش کنید"
+                                                obs.summary.contains("429") -> "محدودیت تعداد درخواست هوش مصنوعی (۴۲۹)"
+                                                else -> obs.summary
+                                            }
+                                        } else {
+                                            obs.summary
+                                        }
+                                        Text(
+                                            text = displaySummary,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 2,
+                                            color = if (isFailedOrPending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = "مشاهده جزئیات",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (isFailedOrPending || isAnalyzing) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isAnalyzing) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("در حال تحلیل مجدد...", style = MaterialTheme.typography.labelSmall)
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = { onRetryAnalysis(obs) },
+                                            modifier = Modifier.height(34.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("تلاش مجدد", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
                                 }
                             }
-                            Icon(Icons.Default.ChevronRight, contentDescription = null)
                         }
                     }
                 }

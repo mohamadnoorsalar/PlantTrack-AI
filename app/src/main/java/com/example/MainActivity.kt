@@ -122,6 +122,9 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
     var pendingTelegramPostText by remember { mutableStateOf<String?>(null) }
     var pendingTelegramImagePath by remember { mutableStateOf<String?>(null) }
 
+    // Observation Detail screen state
+    var selectedObservationForDetail by remember { mutableStateOf<com.example.data.local.entity.Observation?>(null) }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -323,11 +326,43 @@ fun MainAppContent(settingsViewModel: SettingsViewModel) {
                                 navController.popBackStack()
                             }
                         },
-                        onObservationClick = { _ -> },
+                        onObservationClick = { obs ->
+                            selectedObservationForDetail = obs
+                            navController.navigate("observation_detail")
+                        },
+                        onRetryAnalysis = { obs ->
+                            plantDetailViewModel.retryObservationAnalysis(obs)
+                            Toast.makeText(context, "در حال ارسال مجدد به هوش مصنوعی...", Toast.LENGTH_SHORT).show()
+                        },
                         onCompareClick = {
                             navController.navigate("compare_screen")
                         }
                     )
+                }
+
+                composable("observation_detail") {
+                    val obs = selectedObservationForDetail
+                    val plantName = plantDetailState.plantWithDetails?.plant?.name ?: "گیاه"
+                    if (obs != null) {
+                        com.example.ui.observation.ObservationDetailScreen(
+                            observation = obs,
+                            plantName = plantName,
+                            onBackClick = { navController.popBackStack() },
+                            onRetryAnalysis = { targetObs ->
+                                plantDetailViewModel.retryObservationAnalysis(targetObs)
+                                Toast.makeText(context, "در حال تلاش مجدد برای تحلیل تصویر...", Toast.LENGTH_SHORT).show()
+                            },
+                            onShareToTelegram = { targetObs ->
+                                val postText = com.example.data.telegram.TelegramMessageBuilder.buildObservationPost(
+                                    plantName = plantName,
+                                    plantId = targetObs.plantId,
+                                    observation = targetObs
+                                )
+                                pendingTelegramPostText = postText
+                                pendingTelegramImagePath = targetObs.imagePath
+                            }
+                        )
+                    }
                 }
 
                 composable("compare_screen") {

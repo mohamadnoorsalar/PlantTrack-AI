@@ -74,4 +74,51 @@ class PlantDetailViewModel(application: Application) : AndroidViewModel(applicat
             onDeleted()
         }
     }
+
+    fun retryObservationAnalysis(observation: Observation) {
+        viewModelScope.launch {
+            val customApiKey = app.settingRepository.get("gemini_api_key")
+            val outputLanguage = app.settingRepository.get("app_language") ?: "fa"
+            val plantName = uiState.value.plantWithDetails?.plant?.name ?: ""
+
+            // Update status to ANALYZING
+            obsRepo.updateObservation(
+                observation.copy(
+                    aiStatus = "ANALYZING",
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            val analysisResult = app.geminiService.analyzePlantImage(
+                imagePath = observation.imagePath,
+                plantName = plantName,
+                customApiKey = customApiKey,
+                outputLanguage = outputLanguage
+            )
+
+            if (analysisResult.isSuccess) {
+                val res = analysisResult.getOrThrow()
+                val updated = observation.copy(
+                    aiStatus = "COMPLETED",
+                    overallStatus = res.overallStatus,
+                    summary = res.summary,
+                    visualChanges = org.json.JSONArray(res.visualChanges).toString(),
+                    visibleIssues = org.json.JSONArray(res.visibleIssues).toString(),
+                    possibleCauses = org.json.JSONArray(res.possibleCauses).toString(),
+                    recommendedObservations = org.json.JSONArray(res.recommendedObservations).toString(),
+                    confidence = res.confidence,
+                    updatedAt = System.currentTimeMillis()
+                )
+                obsRepo.updateObservation(updated)
+            } else {
+                val err = analysisResult.exceptionOrNull()?.message ?: "خطای ناشناخته"
+                val updated = observation.copy(
+                    aiStatus = "FAILED",
+                    summary = err,
+                    updatedAt = System.currentTimeMillis()
+                )
+                obsRepo.updateObservation(updated)
+            }
+        }
+    }
 }
