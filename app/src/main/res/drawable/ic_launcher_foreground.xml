@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="18"
+        android:translateY="18"
+        android:scaleX="0.666"
+        android:scaleY="0.666">
+        <!-- Main stylized leaf -->
+        <path
+            android:fillColor="#4CAF50"
+            android:pathData="M54,12 C24,12 18,48 18,72 C28,78 40,78 54,72 C68,78 80,78 90,72 C90,48 84,12 54,12 Z" />
+        <!-- Leaf inner vein & AI circuitry stem -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:pathData="M54,24 L54,84" />
+        <path
+            android:strokeColor="#81C784"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:pathData="M54,42 L40,32" />
+        <path
+            android:strokeColor="#81C784"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:pathData="M54,54 L68,44" />
+        <path
+            android:strokeColor="#81C784"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:pathData="M54,66 L42,58" />
+        <!-- AI Nodes (dots) -->
+        <path
+            android:fillColor="#E8F5E9"
+            android:pathData="M40,32 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        <path
+            android:fillColor="#E8F5E9"
+            android:pathData="M68,44 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        <path
+            android:fillColor="#E8F5E9"
+            android:pathData="M42,58 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        <path
+            android:fillColor="#C8E6C9"
+            android:pathData="M54,24 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
+    </group>
+</vector>
